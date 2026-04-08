@@ -1,31 +1,240 @@
-
 # Moqui Framework Release Notes
 
-## Release 3.0.0 - Not Yet Released
+## Release 4.0.0 - 27 Feb 2026
 
-Moqui Framework 3.0.0 is a major new feature and bug fix release.
+Moqui framework v4.0.0 is a major new release with massive changes some of which
+are breaking changes. All users are advised to upgrade to benefit from all the
+new features, security fixes, upgrades, performance improvements and so on.
 
-In this release the old moqui-elasticsearch component with embedded ElasticSearch is no longer supported. Instead the new
-ElasticFacade is included in the framework as a client to an external ElasticSearch instance which can be installed in
-runtime/elasticsearch and automatically started/stopped in a separate process by the MoquiStart class (executable WAR, not when
-WAR file dropped into Servlet container).
+### Major Changes
 
-For a complete list of changes see:
+#### Java Upgrade to Version 21 (Incompatible Change)
+
+Moqui Framework now requires Java 21. This provides improved performance,
+long-term support, and access to modern JVM features, while removing legacy
+APIs. All custom code and components must be validated against Java 21 to ensure
+compatibility.
+
+As part of this work:
+
+- Remove deprecated finalize methods no longer applicable in JDK21.
+- Lots of code improvements to comply with JDK21.
+
+#### Groovy upgrade to version 5 (Incompatible Change)
+
+Groovy 5 in combination with newer JDK21 is more strict in @CompileStatic. There
+were illegal bytecodes being generated, and it has to do with accessing fields
+from inner classes.
+
+Another change is that Groovysh is removed. Therefore, the terminal interface
+was rewritten from scratch using a different architecture based on
+`groovy.lang.GroovyShell`. This led to both Screen changes (in runtime) and
+backend changes.
+
+#### Change EntityValue API (Breaking Change)
+
+Change `EntityValue.getEntityName()` to `EntityValue.resolveEntityName()` and
+`EntityValue.getEntityNamePretty()` to `EntityValue.resolveEntityNamePretty()`.
+
+Groovy 4+ introduced a change in the way property to method mapping happens as
+[documented](https://groovy-lang.org/style-guide.html#_getters_and_setters).
+
+This introduced a bug that occurs when querying an entity that has a field named
+`entityName`. The bug occurs because the query returns an object of type
+`org.moqui.entity.EntityValue`. The problem is that the EntityValue class has a
+method called getEntityName() and as per the groovy 4+ behavior this function is
+called when trying to access a field named `entityName`. Sample code:
+
+```
+def someMember = ec.entity
+    .find('moqui.entity.view.DbViewEntityMember')
+    .condition(...)
+    .one()
+someMember.entityName // BUG returns .getEntityName(), not .get('entityName')
+```
+
+#### Upgrade to Jetty version 12.1 and EE 11
+
+This is a major migration. It bumps jetty to version 12.1 and also servlet
+related packages (websocket, webapp, proxy) to jakarta EE 11.
+
+The upgrade broke the existing custom moqui class loaders, and required
+significant refactoring of class loaders and webapp structure (e.g.
+WebAppContext, Session Handling, etc ...)
+
+Impact on developers:
+
+Any custom work for jetty should be upgraded to the new versions compatible with
+jetty 12.1 and jakarta EE 11
+
+#### Upgrade all javax libraries to jakarta
+
+All libraries including commons-fileupload, xml.bind-api, activation, mail,
+websocket, servlets (6.1), and others are all migrated to their jakarta
+equivalents. As part of this exercise, many deprecated, old or irrelevant / not
+used dependencies were removed. This change required refactoring critical moqui
+facades and core API to comply with the switch to Jakarta.
+
+Any custom work for older javax should be upgraded where applicable to use the
+jakarta equivalent libraries.
+
+#### Integration with the New Bitronix Fork (Incompatible Change)
+
+Moqui Framework now depends on the actively maintained Bitronix fork at:
+https://github.com/moqui/bitronix
+
+The current integrated version is 4.0.0-BETA1, with stabilization ongoing.
+
+This fork includes:
+
+- Major modernization and cleanup
+- Jakarta namespace migration
+- JMS namespace migration
+- Important bug fixes and stability improvements
+- Legacy Bitronix artifacts are no longer supported.
+- Deployments must remove old Bitronix dependencies.
+
+#### Migration From javax.transaction to jakarta.transaction (BREAKING CHANGE)
+
+Moqui has migrated all transaction-related imports and internal APIs from
+javax.transaction.* to jakarta.transaction.*, following changes in the new
+Bitronix fork.
+
+Impact on developers:
+
+- Any code referencing javax.transaction.* must update imports to
+  jakarta.transaction.*.
+- Affects transaction facade usage, user transactions, and service-layer
+  transaction management.
+- If using custom transaction API, then compilation failures should be expected
+  until imports are updated. This does not impact projects that are purely
+  depending on moqui facades without accessing the underlying APIs
+
+This aligns Moqui with the Jakarta EE namespace changes and the newer Bitronix
+transaction manager.
+
+#### Upgrade Infrastructure
+
+- Postgres to version 18.1
+- MySQL to version 9.5
+- Remove docker compose "version" obsolete key
+- Upgrade opensearch to 3.4.0
+- Upgrade java in docker to eclipse-temurin:21
+- Switch jwilder/nginx-proxy to nginxproxy/nginx-proxy
+
+These upgrades require careful planning when migrating to moqui V4. It is
+recommended to delete elastic / open search and reindex, and to switch
+from elasticsearch to opensearch. Also ensure an upgrade path for your chosen
+database.
+
+Also, in newer versions of docker, the "version" key is obsolete, so ensure
+updating installed docker so that it works without the "version" setting.
+
+#### Gradle Wrapper Updated to 9.2 (BREAKING CHANGE)
+
+The framework now builds using Gradle 9.2, bringing:
+
+- Faster builds
+- Stricter validation and deprecation cleanup
+
+Changes included:
+- Refactored property assignments and function calls to satisfy newer Gradle immutability rules.
+- Replaced deprecated exec {} blocks with Groovy execute() usage (Windows support still being refined).
+- Updated and corrected dependency declarations, including replacing deprecated modules and fixing invalid version strings.
+- Numerous misc. updates required by Gradle 9.x API changes.
+- Unified dependencyUpdates settings
+
+This upgrade required significant modifications to component build scripts.
+
+Given the upgrade to gradle, Java and bitronix, the following community components were upgraded to comply with new requirements:
+- HiveMind
+- PopCommerce
+- PopRestStore
+- example
+- mantle-braintree
+- mantle-usl
+- moqui-camel
+- moqui-cups
+- moqui-fop
+- moqui-hazelcast
+- moqui-image
+- moqui-orientdb
+- moqui-poi
+- moqui-runtime
+- moqui-sftp
+- moqui-sso
+- moqui-wikitext
+- start
+
+### New Features
+
+- Upgrade groovy to version 5
+- Upgrade to JDK21 by default
+- Upgrade to Apache Shiro 2, no longer using INI factory, but rather INI environment classes
+- Upgrade to jetty 2.1 and jakarta EE 11
+- Upgrade docker infrastructure including opensearch, mysql, postgres to latest
+- Upgrade all dependencies to their latest versions
+- Switch from Thread.getId() to Thread.threadId() to work on both virtual and platform threads
+
+## Release 3.9.9 - 25 Feb 2026
+
+Moqui Framework 3.9.9 is a minor new feature and bug fix release, but mostly a maintenance release for the Moqui Framework 
+4.0.0 release series.
+
+For a complete list see the commit log:
+
+https://github.com/moqui/moqui-framework/compare/v3.0.0...v3.9.9
+
+## Release 3.1.0 - Canceled release
+
+## Release 3.0.0 - 31 May 2022
+
+Moqui Framework 3.0.0 is a major new feature and bug fix release with some changes that are not backward compatible.
+
+Java 11 is now the minimum Java version required. For development and deployment make sure Java 11 is installed
+(such as openjdk-11-jdk or adoptopenjdk-11-openj9 on Linux), active (on Linux use 'sudo update-alternatives --config java'),
+and that JAVA_HOME is set to the Java 11 JDK install path (for openjdk-11-jdk on Linux: /usr/lib/jvm/java-11-openjdk-amd64).
+
+In this release the old moqui-elasticsearch component with embedded ElasticSearch is no longer supported. Instead, the new
+ElasticFacade is included in the framework as a client to an external OpenSearch or ElasticSearch instance which can be 
+installed in runtime/opensearch or runtime/elasticsearch and automatically started/stopped in a separate process by the
+MoquiStart class (executable WAR, not when WAR file dropped into Servlet container).
+
+For search the recommended versions for this release are OpenSearch 1.3.1 (https://opensearch.org/) or ElasticSearch 7.10.2.
+For ElasticSearch this is the last version released under the Apache 2.0 license).
+
+Now that JavaScript/CSS minify and certain other issues with tools have been resolved, Gradle 7+ is supported.   
+
+This is a brief summary of the changes since the last release, for a complete list see the commit log:
 
 https://github.com/moqui/moqui-framework/compare/v2.1.3...v3.0.0
 
 ### Non Backward Compatible Changes
 
+- Java 11 is now required, updated from Java 8
+- Updated Spock to 2.1 and with that update now using JUnit Platform and JUnit 5 (Jupiter); with this update old JUnit 4
+  test annotations and such are supported, but JUnit 4 TestSuite implementations need to be updated to use the new 
+  JUnit Platform and Jupiter annotations
 - Library updates have been done that conflict with ElasticSearch making it impossible to run embedded
 - XMLRPC support had been partly removed years ago, is now completely removed
-- CUPS4J library no longer included in moqui-framework
+- CUPS4J library no longer included in moqui-framework, use the moqui-cups component to add this functionality
 - Network printing services (org.moqui.impl.PrintServices) are now mostly placeholders that return error messages if used, CUPS4J
-  library and services that depend on it are now in the moqui-cups tool component 
+  library and services that depend on it are now in the moqui-cups tool component
+- H2 has non-backward compatible changes, including VALUE now being a reserved word; the Moqui Conf XML file now supports
+  per-database entity and field name substitution to handle this and similar future issues; the main issue this cannot
+  solve is with older H2 database files that have columns named VALUE, these may need to be changes to THE_VALUE using
+  an older version of H2 before updating (this is less common as H2 databases are not generally retained long-term) 
 
 ### New Features
 
-- Recommended Gradle version is 5.6.4 (at least Gradle 5+ but not Gradle 6+ for compatibility with current plugins)
-- Java versions 8 and 11 supported (compiles to Java 8 bytecode by default, does not use any Java 11 language constructs or API)
+- Recommended Gradle version is 7+ with updates to support the latest versions of Gradle
+- Updated Jetty to version 10 (which requires Java 11 or later)
+- MFA support for login and update password in screens and REST API with factors including authc code by email and SMS, 
+  TOTP code (via authenticator app), backup codes; can set a flag on UserGroup to require second factor for all users in
+  the group, and if any user has any additional factor enable then a second factor will be required
+- Various security updates including vulnerabilities in 3rd party libraries (including Log4j, Jackson, Shiro, Jetty), 
+  and some in Moqui itself including XSS vulnerabilities in certain error cases and other framework generated 
+  messages/responses based on testing with OWASP Zap and two commercial third party reviews (done by larger Moqui users)
 - Optimization for startup-add-missing to get meta data for all tables and columns instead of per entity for much faster startup
   when enabled; default for runtime-add-missing is now 'false' and startup-add-missing is now 'true' for all DBs including H2
 - View Entity find improvements
@@ -34,6 +243,17 @@ https://github.com/moqui/moqui-framework/compare/v2.1.3...v3.0.0
     sub-select is commonly used in view entities
   - entity find SQL improvements for view entities where a member entity links to another member-entity with a function on a join field
   - support entity-condition in view-entity used as a sub-select, was being ignored before
+- Improvements to DataDocument generation for a DataFeed to handle very large database tables to feed to ES or elsewhere,
+  including chunking and excluding service parameters from the per ExecutionContext instance service call history  
+- DataFeed and DataDocument support for manual delete of documents and automatic delete on primary entity record delete
+- Scheduled screen render to send regular reports to users by email (simple email with CSV or XSLT attachment) using 
+  saved finds on any form-list based screen
+- For entity field encryption default to PBEWithHmacSHA256AndAES_128 instead of PBEWithMD5AndDES, and add configuration
+  options for old field encrypt settings (algo, key, etc) to support changing settings, with a service to re-encrypt all 
+  encrypted fields on all records, or can re-encrypt only when data is touched (as long as all old settings are retained,
+  the framework will attempt decrypt with each)
+- Groovy Shell screen added to the Tools app (with special permission), an interactive Groovy Console for testing in 
+  various environments and for fixing certain production issues
 
 ### Bug Fixes
 

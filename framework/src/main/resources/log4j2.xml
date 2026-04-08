@@ -11,6 +11,8 @@ https://logging.apache.org/log4j/2.x/manual/layouts.html#PatternLayout
         <Property name="moqui.logger.level.xml_action">info</Property>
         <Property name="moqui.logger.level.entity_find">info</Property>
         <Property name="moqui.logger.level.entity_query">info</Property>
+        <!-- set log4j2.formatMsgNoLookups=true for log string based vulnerability -->
+        <Property name="log4j2.formatMsgNoLookups">true</Property>
     </Properties>
     <Appenders>
         <RollingFile name="LogFile" fileName="${sys:moqui.runtime}/log/moqui.log"
@@ -33,18 +35,19 @@ https://logging.apache.org/log4j/2.x/manual/layouts.html#PatternLayout
             <DefaultRolloverStrategy max="20"/>
         </RollingFile>
         <MoquiLog4jAppender name="MoquiSubscribers"/>
+        <Console name="STDOUT" target="SYSTEM_OUT">
+            <PatternLayout pattern="%highlight{%d{HH:mm:ss.SSS} %5p %12.12t %38.38c{1.9.1.}} %m%n"/>
+        </Console>
         <Async name="AsyncLog">
             <AppenderRef ref="STDOUT"/>
             <AppenderRef ref="LogFile"/>
             <AppenderRef ref="ErrorFile"/>
             <AppenderRef ref="MoquiSubscribers"/>
         </Async>
-        <Console name="STDOUT" target="SYSTEM_OUT">
-            <PatternLayout pattern="%highlight{%d{HH:mm:ss.SSS} %5p %12.12t %38.38c{1.9.1.}} %m%n"/>
-        </Console>
     </Appenders>
     <Loggers>
         <Logger name="org.apache" level="warn"/>
+        <Logger name="org.eclipse.jetty.annotations" level="error"/>
         <Logger name="org.apache.fop.fo.extensions.svg.SVGElementMapping" level="fatal"/>
 
         <Logger name="freemarker" level="warn"/>

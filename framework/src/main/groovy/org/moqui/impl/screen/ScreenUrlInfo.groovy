@@ -39,8 +39,9 @@ import org.moqui.util.StringUtilities
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
+import jakarta.servlet.http.HttpServletRequest
+
 import javax.cache.Cache
-import javax.servlet.http.HttpServletRequest
 
 @CompileStatic
 class ScreenUrlInfo {
@@ -271,6 +272,9 @@ class ScreenUrlInfo {
         ArrayDeque<ArtifactExecutionInfoImpl> artifactExecutionInfoStack = new ArrayDeque<ArtifactExecutionInfoImpl>()
 
         int screenPathDefListSize = screenPathDefList.size()
+        boolean allowedByScreenDefinitionView = false
+        boolean allowedByScreenDefinitionAll = false
+        boolean allowedByScreenDefinition = false
         for (int i = 0; i < screenPathDefListSize; i++) {
             AuthzAction curActionEnum = (i == (screenPathDefListSize - 1)) ? actionEnum : ArtifactExecutionInfo.AUTHZA_VIEW
             ScreenDefinition screenDef = (ScreenDefinition) screenPathDefList.get(i)
@@ -285,9 +289,15 @@ class ScreenUrlInfo {
             MNode screenNode = screenDef.getScreenNode()
 
             String requireAuthentication = screenNode.attribute('require-authentication')
+            allowedByScreenDefinitionView = "anonymous-view".equals(requireAuthentication)
+            allowedByScreenDefinitionAll = "anonymous-all".equals(requireAuthentication)
+            if (actionEnum == ArtifactExecutionInfo.AUTHZA_VIEW) {
+                allowedByScreenDefinition = allowedByScreenDefinition || allowedByScreenDefinitionView || allowedByScreenDefinitionAll
+            } else if (actionEnum == ArtifactExecutionInfo.AUTHZA_ALL)
+                allowedByScreenDefinition = allowedByScreenDefinition || allowedByScreenDefinitionAll
             if (!aefi.isPermitted(aeii, lastAeii,
                     isLast ? (!requireAuthentication || "true".equals(requireAuthentication)) : false, false, false, artifactExecutionInfoStack)) {
-                // logger.warn("TOREMOVE user ${username} is NOT allowed to view screen at path ${this.fullPathNameList} because of screen at ${screenDef.location}")
+                //logger.warn("TOREMOVE user ${userId} is NOT allowed to view screen at path ${this.fullPathNameList} because of screen at ${screenDef.location}")
                 if (permittedCacheKey != null) aefi.screenPermittedCache.put(permittedCacheKey, false)
                 return false
             }
@@ -296,7 +306,7 @@ class ScreenUrlInfo {
         }
 
         // see if the transition is permitted
-        if (transitionItem != null) {
+        if (!allowedByScreenDefinition && transitionItem != null) {
             ScreenDefinition lastScreenDef = (ScreenDefinition) screenPathDefList.get(screenPathDefList.size() - 1)
             ArtifactExecutionInfoImpl aeii = new ArtifactExecutionInfoImpl("${lastScreenDef.location}/${transitionItem.name}",
                     ArtifactExecutionInfo.AT_XML_SCREEN_TRANS, ArtifactExecutionInfo.AUTHZA_VIEW, null)
@@ -317,10 +327,16 @@ class ScreenUrlInfo {
             if (authzAction == null) authzAction = ServiceDefinition.verbAuthzActionEnumMap.get(ServiceDefinition.getVerbFromName(serviceName))
             if (authzAction == null) authzAction = ArtifactExecutionInfo.AUTHZA_ALL
 
+            boolean allowedByServiceDefinition = false
+            if (authzAction == ArtifactExecutionInfo.AUTHZA_VIEW) {
+                allowedByServiceDefinition = allowedByScreenDefinitionView || (sd != null && ("anonymous-view".equals(sd.authenticate) || "anonymous-all".equals(sd.authenticate)))
+            } else if (authzAction in [ArtifactExecutionInfo.AUTHZA_ALL, ArtifactExecutionInfo.AUTHZA_CREATE, ArtifactExecutionInfo.AUTHZA_UPDATE, ArtifactExecutionInfo.AUTHZA_DELETE]) {
+                allowedByServiceDefinition = allowedByScreenDefinitionAll || (sd != null && "anonymous-all".equals(sd.authenticate))
+            }
             ArtifactExecutionInfoImpl aeii = new ArtifactExecutionInfoImpl(serviceName, ArtifactExecutionInfo.AT_SERVICE, authzAction, null)
 
             ArtifactExecutionInfoImpl lastAeii = (ArtifactExecutionInfoImpl) artifactExecutionInfoStack.peekFirst()
-            if (!aefi.isPermitted(aeii, lastAeii, true, false, false, null)) {
+            if (!aefi.isPermitted(aeii, lastAeii, !allowedByServiceDefinition, false, false, null)) {
                 // logger.warn("TOREMOVE user ${username} is NOT allowed to run transition at path ${this.fullPathNameList} because of screen at ${screenDef.location}")
                 if (permittedCacheKey != null) aefi.screenPermittedCache.put(permittedCacheKey, false)
                 return false
@@ -862,7 +878,7 @@ class ScreenUrlInfo {
         if (startsWithSlash && screenPath.startsWith("//")) {
             // find the screen by name
             String trimmedFromPath = screenPath.substring(2)
-            ArrayList<String> originalPathNameList = new ArrayList<String>(trimmedFromPath.split("/") as List)
+            ArrayList<String> originalPathNameList = new ArrayList<String>(Arrays.asList(trimmedFromPath.split("/")))
             originalPathNameList = cleanupPathNameList(originalPathNameList, inlineParameters)
 
             if (sfi.screenFindPathCache.containsKey(screenPath)) {
@@ -1175,6 +1191,22 @@ class ScreenUrlInfo {
             if (fromMap.containsKey("pageNoLimit")) toMap.put("pageNoLimit", (String) fromMap.get("pageNoLimit"))
             if (fromMap.containsKey("lastStandalone")) toMap.put("lastStandalone", (String) fromMap.get("lastStandalone"))
             if (fromMap.containsKey("renderMode")) toMap.put("renderMode", (String) fromMap.get("renderMode"))
+        }
+        Map<String, String> getPassThroughParameterMap() {
+            Map<String, String> paramMap = new HashMap<>(getParameterMap())
+            paramMap.remove("moquiFormName")
+            paramMap.remove("moquiSessionToken")
+            paramMap.remove("lastStandalone")
+            paramMap.remove("formListFindId")
+            paramMap.remove("moquiRequestStartTime")
+            paramMap.remove("webrootTT")
+            logger.warn("pass through params for ${getUrl()}: ${paramMap}")
+            return paramMap
+        }
+        UrlInstance addPassThroughParameters(UrlInstance sourceUrlInstance) {
+            if (sourceUrlInstance == null) return null
+            addParameters(sourceUrlInstance.getPassThroughParameterMap())
+            return this
         }
 
         UrlInstance cloneUrlInstance() {

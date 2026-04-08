@@ -17,11 +17,11 @@ import groovy.transform.CompileStatic
 import org.moqui.BaseArtifactException
 import org.moqui.service.ServiceException
 
-import javax.transaction.Synchronization
-import javax.transaction.Transaction
+import jakarta.transaction.Status
+import jakarta.transaction.Synchronization
+import jakarta.transaction.Transaction
+import jakarta.transaction.TransactionManager
 import javax.transaction.xa.XAException
-import javax.transaction.TransactionManager
-import javax.transaction.Status
 
 import org.moqui.impl.context.ExecutionContextFactoryImpl
 import org.moqui.service.ServiceCallSpecial
@@ -44,7 +44,7 @@ class ServiceCallSpecialImpl extends ServiceCallImpl implements ServiceCallSpeci
     ServiceCallSpecial name(String p, String v, String n) { serviceNameInternal(p, v, n); return this }
 
     @Override
-    ServiceCallSpecial parameters(Map<String, ?> map) { parameters.putAll(map); return this }
+    ServiceCallSpecial parameters(Map<String, Object> map) { parameters.putAll(map); return this }
     @Override
     ServiceCallSpecial parameter(String name, Object value) { parameters.put(name, value); return this }
 

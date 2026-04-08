@@ -14,9 +14,14 @@
 package org.moqui.impl.screen
 
 import freemarker.template.Template
+
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.CompileStatic
+
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
+
 import org.moqui.BaseArtifactException
 import org.moqui.BaseException
 import org.moqui.context.*
@@ -26,9 +31,6 @@ import org.moqui.entity.EntityException
 import org.moqui.entity.EntityList
 import org.moqui.entity.EntityListIterator
 import org.moqui.entity.EntityValue
-import org.moqui.impl.entity.EntityFacadeImpl
-import org.moqui.screen.ScreenTest
-import org.moqui.util.WebUtilities
 import org.moqui.impl.context.ArtifactExecutionInfoImpl
 import org.moqui.impl.context.ContextJavaUtil
 import org.moqui.impl.context.ExecutionContextFactoryImpl
@@ -36,22 +38,23 @@ import org.moqui.impl.context.ExecutionContextImpl
 import org.moqui.impl.context.ResourceFacadeImpl
 import org.moqui.impl.context.WebFacadeImpl
 import org.moqui.impl.entity.EntityDefinition
+import org.moqui.impl.entity.EntityFacadeImpl
 import org.moqui.impl.entity.EntityValueBase
 import org.moqui.impl.screen.ScreenDefinition.ResponseItem
 import org.moqui.impl.screen.ScreenDefinition.SubscreensItem
 import org.moqui.impl.screen.ScreenForm.FormInstance
 import org.moqui.impl.screen.ScreenUrlInfo.UrlInstance
+import org.moqui.resource.ResourceReference
 import org.moqui.screen.ScreenRender
+import org.moqui.screen.ScreenTest
 import org.moqui.util.ContextStack
 import org.moqui.util.MNode
-import org.moqui.resource.ResourceReference
 import org.moqui.util.ObjectUtilities
 import org.moqui.util.StringUtilities
+import org.moqui.util.WebUtilities
+
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-
-import javax.servlet.http.HttpServletRequest
-import javax.servlet.http.HttpServletResponse
 
 @CompileStatic
 class ScreenRenderImpl implements ScreenRender {
@@ -205,13 +208,13 @@ class ScreenRenderImpl implements ScreenRender {
                     .first("screen-text-output", "type", renderMode)
             if (stoNode != null && "true".equals(stoNode.attribute("always-standalone"))) {
                 if (logger.isInfoEnabled()) logger.info("Redirecting with 205 and X-Redirect-To ${redirectUrl} instead of rendering ${this.getScreenUrlInfo().getFullPathNameList()}")
-                response.addHeader("X-Redirect-To", redirectUrl)
+                response.setHeader("X-Redirect-To", redirectUrl)
                 // use code 205 (Reset Content) for client router handled redirect
                 response.setStatus(HttpServletResponse.SC_RESET_CONTENT)
             } else {
                 if (logger.isInfoEnabled()) logger.info("Redirecting to ${redirectUrl} instead of rendering ${this.getScreenUrlInfo().getFullPathNameList()}")
                 // add Cache-Control: no-store header since this is often in actions after screen render has started and a Cache-Control header has been set, so replace it here
-                response.setHeader("Cache-Control", "no-store")
+                response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, private")
                 response.sendRedirect(redirectUrl)
             }
             dontDoRender = true
@@ -508,9 +511,10 @@ class ScreenRenderImpl implements ScreenRender {
             if (wfi != null) {
                 // handle screen-last, etc
                 if (isScreenLast || "screen-last-noparam".equals(ri.type)) {
-                    String savedUrl =  wfi.getRemoveScreenLastPath()
+                    String savedUrl = wfi.getRemoveScreenLastPath()
                     urlType = "screen-path"
                     if (savedUrl != null && savedUrl.length() > 0) {
+                        if (savedUrl.startsWith("http")) urlType = "plain"
                         url = savedUrl
                         wfi.removeScreenLastParameters(isScreenLast)
                         // logger.warn("going to screen-last from screen last path ${url}")
@@ -631,7 +635,7 @@ class ScreenRenderImpl implements ScreenRender {
                     if (webappInfo != null) {
                         webappInfo.addHeaders("screen-resource-binary", response)
                     } else {
-                        response.addHeader("Cache-Control", "max-age=86400, must-revalidate, public")
+                        response.setHeader("Cache-Control", "max-age=86400, must-revalidate, public")
                     }
 
                     InputStream is
@@ -666,7 +670,7 @@ class ScreenRenderImpl implements ScreenRender {
                         if (webappInfo != null) {
                             webappInfo.addHeaders("screen-resource-template", response)
                         } else {
-                            response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate, private")
+                            response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, private")
                         }
                     }
                     tr.render(fileResourceRef.location, writer)
@@ -676,7 +680,7 @@ class ScreenRenderImpl implements ScreenRender {
                         if (webappInfo != null) {
                             webappInfo.addHeaders("screen-resource-text", response)
                         } else {
-                            response.addHeader("Cache-Control", "max-age=86400, must-revalidate, public")
+                            response.setHeader("Cache-Control", "max-age=86400, must-revalidate, public")
                         }
                     }
                     // no renderer found, just grab the text (cached) and throw it to the writer
@@ -819,19 +823,19 @@ class ScreenRenderImpl implements ScreenRender {
                     if (webappInfo != null) {
                         webappInfo.addHeaders("screen-server-static", response)
                     } else {
-                        response.addHeader("Cache-Control", "max-age=86400, must-revalidate, public")
+                        response.setHeader("Cache-Control", "max-age=86400, must-revalidate, public")
                     }
                 } else {
                     if (webappInfo != null) {
                         webappInfo.addHeaders("screen-render", response)
                     } else {
                         // if requires a render, don't cache and make it private
-                        response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate, private")
+                        response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, private")
                         // add Content-Security-Policy by default to not allow use in iframe or allow form actions on different host
                         // see https://content-security-policy.com/
                         // TODO make this configurable for different screen paths? maybe a screen.web-settings attribute to exclude or add to?
-                        response.addHeader("Content-Security-Policy", "frame-ancestors 'none'; form-action 'self';")
-                        response.addHeader("X-Frame-Options", "deny")
+                        response.setHeader("Content-Security-Policy", "frame-ancestors 'none'; form-action 'self';")
+                        response.setHeader("X-Frame-Options", "deny")
                     }
                 }
                 // if the request is secure add HSTS Strict-Transport-Security header with one leap year age (in seconds)
@@ -839,14 +843,14 @@ class ScreenRenderImpl implements ScreenRender {
                     if (webappInfo != null) {
                         webappInfo.addHeaders("screen-secure", response)
                     } else {
-                        response.addHeader("Strict-Transport-Security", "max-age=31536000")
+                        response.setHeader("Strict-Transport-Security", "max-age=31536000")
                     }
                 }
 
                 String filename = ec.context.saveFilename as String
                 if (filename) {
                     String utfFilename = StringUtilities.encodeAsciiFilename(filename)
-                    response.addHeader("Content-Disposition", "attachment; filename=\"${filename}\"; filename*=utf-8''${utfFilename}")
+                    response.setHeader("Content-Disposition", "attachment; filename=\"${filename}\"; filename*=utf-8''${utfFilename}")
                 }
             }
 
@@ -1104,6 +1108,19 @@ class ScreenRenderImpl implements ScreenRender {
         return activePath
     }
 
+    // TODO: This may not be the actual place we decided on, but due to lost work this is my best guess
+    // Get the first screen path of the parent screens with a transition specified of the currently rendered screen
+    String getScreenPathHasTransition(String transitionName) {
+        int screenPathDefListSize = screenUrlInfo.screenPathDefList.size()
+        for (int i = 0; i < screenPathDefListSize; i++) {
+            ScreenDefinition screenDef = (ScreenDefinition) screenUrlInfo.screenPathDefList.get(i)
+            if (screenDef.hasTransition(transitionName)) {
+                return '/' + screenUrlInfo.fullPathNameList.subList(0,i).join('/') + (i == 0 ? '' : '/')
+            }
+        }
+        return null
+    }
+
     String renderSubscreen() {
         // first see if there is another screen def in the list
         if (!getActiveScreenHasNext()) {
@@ -1189,6 +1206,34 @@ class ScreenRenderImpl implements ScreenRender {
         return ""
     }
 
+    MNode getSectionIncludedNode(MNode sectionIncludeNode) {
+        ScreenDefinition sd = getActiveScreenDef()
+        String sectionName = getSectionIncludeName(sectionIncludeNode)
+        ScreenSection section = sd.getSection(sectionName)
+        if (section == null) throw new BaseArtifactException("No section with name [${sectionName}] in screen [${sd.location}]")
+        return section.sectionNode
+    }
+
+    String getSectionIncludeName(MNode sectionIncludeNode) {
+        String sectionLocation = sectionIncludeNode.attribute("location")
+        String sectionName = sectionIncludeNode.attribute("name")
+        boolean isDynamic = (sectionLocation != null && sectionLocation.contains('${')) || (sectionName != null && sectionName.contains('${'))
+        if (isDynamic) {
+            ScreenDefinition sd = getActiveScreenDef()
+            sectionLocation = sfi.ecfi.resourceFacade.expandNoL10n(sectionLocation, null)
+            sectionName = sfi.ecfi.resourceFacade.expandNoL10n(sectionName, null)
+            String cacheName = sectionLocation + "#" + sectionName
+            if (sd.sectionByName.get(cacheName) == null) sd.pullSectionInclude(sectionIncludeNode)
+            // logger.warn("sd.sectionByName ${sd.sectionByName}")
+            return cacheName
+        } else {
+            return sectionName
+        }
+    }
+    String renderSectionInclude(MNode sectionIncludeNode) {
+        renderSection(getSectionIncludeName(sectionIncludeNode))
+    }
+
     MNode getFormNode(String formName) {
         FormInstance fi = getFormInstance(formName)
         if (fi == null) return null
@@ -1241,6 +1286,8 @@ class ScreenRenderImpl implements ScreenRender {
         return ""
     }
 
+    /** If isTemplateStr != "false" then render a template using renderer based on location extension,
+     * or if no rendered found use isTemplateStr as an extension (like "ftl"), and if no template renderer found just write the text */
     String renderText(String location, String isTemplateStr) {
         boolean isTemplate = !"false".equals(isTemplateStr)
 
@@ -1253,9 +1300,12 @@ class ScreenRenderImpl implements ScreenRender {
             // NOTE: run templates with their own variable space so we can add sri, and avoid getting anything added from within
             ContextStack cs = (ContextStack) ec.context
             cs.push()
-            cs.put("sri", this)
-            sfi.ecfi.resourceFacade.template(location, writer)
-            cs.pop()
+            try {
+                cs.put("sri", this)
+                ec.resourceFacade.template(location, writer, isTemplateStr)
+            } finally {
+                cs.pop()
+            }
             writer.flush()
             // NOTE: this returns a String so that it can be used in an FTL interpolation, but it always writes to the writer
             return ""
@@ -1380,7 +1430,7 @@ class ScreenRenderImpl implements ScreenRender {
     String pushContext() { ec.contextStack.push(); return "" }
     String popContext() { ec.contextStack.pop(); return "" }
 
-    /** Call this at the beginning of a form-single or for form-list.@first-row-map and @last-row-map. Always call popContext() at the end of the form! */
+    /** Call this at the beginning of a form-single or for form-list.@map-first-row and @map-last-row. Always call popContext() at the end of the form! */
     String pushSingleFormMapContext(String mapExpr) {
         ContextStack cs = ec.contextStack
         Map valueMap = null
@@ -1393,6 +1443,13 @@ class ScreenRenderImpl implements ScreenRender {
         cs.put("_formMap", valueMap)
 
         return ""
+    }
+    Map getSingleFormMap(String mapExpr) {
+        Map valueMap = null
+        if (mapExpr != null && !mapExpr.isEmpty()) valueMap = (Map) ec.resourceFacade.expression(mapExpr, null)
+        if (valueMap instanceof EntityValue) valueMap = ((EntityValue) valueMap).getMap()
+        if (valueMap == null) valueMap = new HashMap()
+        return valueMap
     }
     String startFormListRow(ScreenForm.FormListRenderInfo listRenderInfo, Object listEntry, int index, boolean hasNext) {
         ContextStack cs = ec.contextStack
@@ -1600,13 +1657,8 @@ class ScreenRenderImpl implements ScreenRender {
     Map<String, Object> getFormFieldValues(MNode formNode) {
         Map<String, Object> fieldValues = new LinkedHashMap<>()
 
-        if ("true".equals(formNode.attribute("pass-through-parameters"))) {
-            UrlInstance currentFindUrl = getScreenUrlInstance().cloneUrlInstance()
-                    .removeParameter("moquiFormName").removeParameter("moquiSessionToken")
-                    .removeParameter("lastStandalone").removeParameter("formListFindId")
-                    .removeParameter("moquiRequestStartTime").removeParameter("webrootTT")
-            fieldValues.putAll(currentFindUrl.getParameterMap())
-        }
+        if ("true".equals(formNode.attribute("pass-through-parameters")))
+            fieldValues.putAll(getScreenUrlInstance().getPassThroughParameterMap())
 
         fieldValues.put("moquiFormName", formNode.attribute("name"))
         String lastUpdatedString = getNamedValuePlain("lastUpdatedStamp", formNode)
@@ -1616,7 +1668,7 @@ class ScreenRenderImpl implements ScreenRender {
         int afnSize = allFieldNodes.size()
         for (int i = 0; i < afnSize; i++) {
             MNode fieldNode = (MNode) allFieldNodes.get(i)
-            addFormFieldValue(fieldNode, fieldValues, false)
+            addFormFieldValue(fieldNode, fieldValues, (char) 'r')
         }
         return fieldValues
     }
@@ -1631,7 +1683,7 @@ class ScreenRenderImpl implements ScreenRender {
         int afnSize = allFieldNodes.size()
         for (int i = 0; i < afnSize; i++) {
             MNode fieldNode = (MNode) allFieldNodes.get(i)
-            addFormFieldValue(fieldNode, fieldValues, true)
+            addFormFieldValue(fieldNode, fieldValues, (char) 'h')
         }
 
         // add orderByField
@@ -1664,11 +1716,11 @@ class ScreenRenderImpl implements ScreenRender {
         ArrayList<Map<String, Object>> outRows = new ArrayList<>(rowsSize)
         for (int ri = 0; ri < rowsSize; ri++) {
             Map<String, Object> row = (Map<String, Object>) listObject.get(ri)
-            outRows.add(transformFormListRow(renderInfo, row))
+            outRows.add(transformFormListRow(renderInfo, row, (char) 'r'))
         }
         return outRows
     }
-    Map<String, Object> transformFormListRow(ScreenForm.FormListRenderInfo renderInfo, Map<String, Object> row) {
+    Map<String, Object> transformFormListRow(ScreenForm.FormListRenderInfo renderInfo, Map<String, Object> row, char rowType) {
         ArrayList<MNode> fieldNodeList = renderInfo.getFormNode().children("field")
         int fieldNodeListSize = fieldNodeList.size()
         Set<String> displayedFields = renderInfo.getDisplayedFields()
@@ -1688,7 +1740,7 @@ class ScreenRenderImpl implements ScreenRender {
                 cs.push(row)
                 cs.push()
                 try {
-                    addFormFieldValue(fieldNode, outRow, false)
+                    addFormFieldValue(fieldNode, outRow, rowType)
                 } finally {
                     cs.pop()
                     cs.pop()
@@ -1700,12 +1752,18 @@ class ScreenRenderImpl implements ScreenRender {
     }
 
     // NOTE: this takes a fieldValues Map as a parameter to populate because a singe form field may have multiple values
-    void addFormFieldValue(MNode fieldNode, Map<String, Object> fieldValues, boolean useHeader) {
+    void addFormFieldValue(MNode fieldNode, Map<String, Object> fieldValues, char rowType) {
         String fieldName = fieldNode.attribute("name")
 
         MNode activeSubNode = (MNode) null
-        if (useHeader) {
+        if (rowType == (char) 'h') {
             activeSubNode = fieldNode.first("header-field")
+        } else if (rowType == (char) 'f') {
+            activeSubNode = fieldNode.first("first-row-field")
+        } else if (rowType == (char) 's') {
+            activeSubNode = fieldNode.first("second-row-field")
+        } else if (rowType == (char) 'l') {
+            activeSubNode = fieldNode.first("last-row-field")
         } else {
             ArrayList<MNode> condFieldNodeList = fieldNode.children("conditional-field")
             for (int j = 0; j < condFieldNodeList.size(); j++) {
@@ -1716,10 +1774,14 @@ class ScreenRenderImpl implements ScreenRender {
                     continue
                 }
                 // logger.warn("condition ${condition}, eval: ${ec.resourceFacade.condition(condition, null)}")
-                if (ec.resourceFacade.condition(condition, null)) {
-                    activeSubNode = condFieldNode
-                    // use first conditional-field with passing condition
-                    break
+                try {
+                    if (ec.resourceFacade.condition(condition, null)) {
+                        activeSubNode = condFieldNode
+                        // use first conditional-field with passing condition
+                        break
+                    }
+                } catch (Throwable t) {
+                    logger.warn("Error evaluating condition ${condition} on field ${fieldName} on screen ${this.getActiveScreenDef().getLocation()}", t)
                 }
             }
             if (activeSubNode == null) activeSubNode = fieldNode.first("default-field")
@@ -1764,6 +1826,7 @@ class ScreenRenderImpl implements ScreenRender {
                 String fieldValue = (String) null
                 String textAttr = widgetNode.attribute("text")
                 String currencyAttr = widgetNode.attribute("currency-unit-field")
+                String currencyNoSymbolAttr = widgetNode.attribute("currency-hide-symbol")
                 if (textAttr != null && ! textAttr.isEmpty()) {
                     String textMapAttr = widgetNode.attribute("text-map")
                     Map textMap = (Map) null
@@ -1774,9 +1837,16 @@ class ScreenRenderImpl implements ScreenRender {
                     } else {
                         fieldValue = ec.resourceFacade.expand(textAttr, null)
                     }
-                    if (currencyAttr != null && !currencyAttr.isEmpty())
-                        fieldValue = ec.l10nFacade.formatCurrency(fieldValue, ec.resourceFacade.expression(currencyAttr, null) as String)
+                    if (currencyAttr != null && !currencyAttr.isEmpty()) {
+                        if (currencyNoSymbolAttr == "true")
+                            fieldValue = ec.l10nFacade.formatCurrencyNoSymbol(fieldValue, ec.resourceFacade.expression(currencyAttr, null) as String)
+                        else
+                            fieldValue = ec.l10nFacade.formatCurrency(fieldValue, ec.resourceFacade.expression(currencyAttr, null) as String)
+                    }
                 } else if (currencyAttr != null && !currencyAttr.isEmpty()) {
+                    if (currencyNoSymbolAttr == "true")
+                        fieldValue = ec.l10nFacade.formatCurrencyNoSymbol(getFieldValue(fieldNode, ""), ec.resourceFacade.expression(currencyAttr, null) as String)
+                    else
                     fieldValue = ec.l10nFacade.formatCurrency(getFieldValue(fieldNode, ""), ec.resourceFacade.expression(currencyAttr, null) as String)
                 } else {
                     fieldValue = getFieldValueString(widgetNode)
@@ -1821,7 +1891,9 @@ class ScreenRenderImpl implements ScreenRender {
                 fieldValues.put(fieldName + "_thru", ec.contextStack.getByString(fieldName + "_thru"))
             } else if ("date-time".equals(widgetName)) {
                 String type = widgetNode.attribute("type")
-                String javaFormat = "date".equals(type) ? "yyyy-MM-dd" : ("time".equals(type) ? "HH:mm" : "yyyy-MM-dd HH:mm")
+                String javaFormat = widgetNode.attribute("format")
+                if (javaFormat == null)
+                    javaFormat = "date".equals(type) ? "yyyy-MM-dd" : ("time".equals(type) ? "HH:mm" : "yyyy-MM-dd HH:mm")
                 fieldValues.put(fieldName, getFieldValueString(fieldNode, widgetNode.attribute("default-value"), javaFormat))
             } else if ("display-entity".equals(widgetName)) {
                 // primary value is for hidden field only, otherwise add nothing (display only)
@@ -1989,7 +2061,8 @@ class ScreenRenderImpl implements ScreenRender {
         return transValue
     }
 
-    Map<String, Object> makeFormListSingleMap(ScreenForm.FormListRenderInfo renderInfo, Map<String, Object> listEntry, UrlInstance formTransitionUrl) {
+    Map<String, Object> makeFormListSingleMap(ScreenForm.FormListRenderInfo renderInfo, Map<String, Object> listEntry,
+            UrlInstance formTransitionUrl, String rowType) {
         MNode formNode = renderInfo.getFormNode()
         Map<String, Object> outMap = new LinkedHashMap<>()
 
@@ -1998,7 +2071,7 @@ class ScreenRenderImpl implements ScreenRender {
         outMap.putAll(getFormHiddenParameters(formNode))
 
         // listEntry fields before boilerplate fields below
-        Map<String, Object> row = transformFormListRow(renderInfo, listEntry)
+        Map<String, Object> row = transformFormListRow(renderInfo, listEntry, rowType.charAt(0))
         outMap.putAll(row)
 
         outMap.put("moquiFormName", formNode.attribute("name"))
@@ -2008,7 +2081,8 @@ class ScreenRenderImpl implements ScreenRender {
 
         return outMap
     }
-    Map<String, Object> makeFormListMultiMap(ScreenForm.FormListRenderInfo renderInfo, ArrayList<Map<String, Object>> listObject, UrlInstance formTransitionUrl) {
+    Map<String, Object> makeFormListMultiMap(ScreenForm.FormListRenderInfo renderInfo,
+            ArrayList<Map<String, Object>> listObject, UrlInstance formTransitionUrl) {
         MNode formNode = renderInfo.getFormNode()
         Map<String, Object> outMap = new LinkedHashMap<>()
 
@@ -2020,7 +2094,7 @@ class ScreenRenderImpl implements ScreenRender {
         int listSize = listObject.size()
         for (int i = 0; i < listSize; i++) {
             Map<String, Object> listEntry = (Map<String, Object>) listObject.get(i)
-            Map<String, Object> row = transformFormListRow(renderInfo, listEntry)
+            Map<String, Object> row = transformFormListRow(renderInfo, listEntry, (char) 'r')
             for (Map.Entry<String, Object> mapEntry in row.entrySet()) {
                 outMap.put(mapEntry.getKey() + "_" + i, mapEntry.getValue())
             }
@@ -2147,7 +2221,7 @@ class ScreenRenderImpl implements ScreenRender {
         // if no user theme see if group a user is in has a theme
         if (themeId == null || themeId.length() == 0) {
             // use reverse alpha so ALL_USERS goes last...
-            List<String> userGroupIdSet = new ArrayList(new TreeSet(ec.user.getUserGroupIdSet())).reverse(true)
+            List<String> userGroupIdSet = new ArrayList<String>(new TreeSet<String>(ec.user.getUserGroupIdSet())).reverse(true)
             EntityList groupThemeList = entityFacade.find("moqui.security.UserGroupScreenTheme")
                     .condition("userGroupId", "in", userGroupIdSet).condition("screenThemeTypeEnumId", stteId)
                     .orderBy("sequenceNum,-userGroupId").useCache(true).disableAuthz().list()
@@ -2294,11 +2368,12 @@ class ScreenRenderImpl implements ScreenRender {
                 String image = sui.menuImage
                 String imageType = sui.menuImageType
                 if (image != null && !image.isEmpty() && (imageType == null || imageType.isEmpty() || "url-screen".equals(imageType)))
-                    image = buildUrl(image).path
+                    image = buildUrl(image).url
 
                 boolean active = (nextItem == subscreensItem.name)
                 Map itemMap = [name:subscreensItem.name, title:ec.resource.expand(subscreensItem.menuTitle, ""),
                                path:screenPath, pathWithParams:pathWithParams, image:image, imageType:imageType]
+                if (subscreensItem.menuInclude) itemMap.menuInclude = true
                 if (active) itemMap.active = true
                 if (screenUrlInstance.disableLink) itemMap.disableLink = true
                 subscreensList.add(itemMap)
@@ -2315,9 +2390,10 @@ class ScreenRenderImpl implements ScreenRender {
             String image = sui.menuImage
             String imageType = sui.menuImageType
             if (image != null && !image.isEmpty() && (imageType == null || imageType.isEmpty() || "url-screen".equals(imageType)))
-                image = buildUrl(image).path
+                image = buildUrl(image).url
+            String menuTitle = ec.l10n.localize(curSsi.menuTitle) ?: curScreen.getDefaultMenuName()
 
-            menuDataList.add([name:pathItem, title:curScreen.getDefaultMenuName(), subscreens:subscreensList, path:curScreenPath,
+            menuDataList.add([name:pathItem, title:menuTitle, subscreens:subscreensList, path:curScreenPath,
                     pathWithParams:curPathWithParams, hasTabMenu:curScreen.hasTabMenu(), renderModes:curScreen.renderModes, image:image, imageType:imageType])
             // not needed: screenStatic:curScreen.isServerStatic(renderMode)
         }
@@ -2333,7 +2409,9 @@ class ScreenRenderImpl implements ScreenRender {
         String lastImageType = fullUrlInfo.menuImageType
         if (lastImage != null && !lastImage.isEmpty() && (lastImageType == null || lastImageType.isEmpty() || "url-screen".equals(lastImageType)))
             lastImage = buildUrl(lastImage).url
-        String lastTitle = fullUrlInfo.targetScreen.getDefaultMenuName()
+
+        SubscreensItem lastSsi = curScreen.getSubscreensItem(lastPathItem)
+        String lastTitle = ec.l10n.localize(lastSsi?.menuTitle) ?: fullUrlInfo.targetScreen.getDefaultMenuName()
         if (lastTitle.contains('${')) lastTitle = ec.resourceFacade.expand(lastTitle, "")
         List<Map<String, Object>> screenDocList = fullUrlInfo.targetScreen.getScreenDocumentInfoList()
 

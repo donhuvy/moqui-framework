@@ -19,9 +19,10 @@ import org.moqui.impl.context.ExecutionContextImpl
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-import javax.servlet.http.HttpSession
-import javax.websocket.*
-import javax.websocket.server.HandshakeRequest
+import jakarta.servlet.http.HttpSession
+
+import jakarta.websocket.*
+import jakarta.websocket.server.HandshakeRequest
 
 /**
  * An abstract class for WebSocket Endpoint that does basic setup, including creating an ExecutionContext with the user
@@ -37,12 +38,13 @@ import javax.websocket.server.HandshakeRequest
 abstract class MoquiAbstractEndpoint extends Endpoint implements MessageHandler.Whole<String> {
     private final static Logger logger = LoggerFactory.getLogger(MoquiAbstractEndpoint.class)
 
-    private ExecutionContextFactoryImpl ecfi = (ExecutionContextFactoryImpl) null
-    private Session session = (Session) null
-    private HttpSession httpSession = (HttpSession) null
-    private HandshakeRequest handshakeRequest = (HandshakeRequest) null
-    private String userId = (String) null
-    private String username = (String) null
+    protected ExecutionContextFactoryImpl ecfi = (ExecutionContextFactoryImpl) null
+    protected Session session = (Session) null
+    protected HttpSession httpSession = (HttpSession) null
+    protected HandshakeRequest handshakeRequest = (HandshakeRequest) null
+    protected String userId = (String) null
+    protected String username = (String) null
+    protected boolean destroyInitialEci = true
 
     MoquiAbstractEndpoint() { super() }
 
@@ -57,17 +59,18 @@ abstract class MoquiAbstractEndpoint extends Endpoint implements MessageHandler.
         this.session = session
         ecfi = (ExecutionContextFactoryImpl) config.userProperties.get("executionContextFactory")
         handshakeRequest = (HandshakeRequest) config.userProperties.get("handshakeRequest")
-        httpSession = handshakeRequest != null ? (HttpSession) handshakeRequest.getHttpSession() : (HttpSession) config.userProperties.get("httpSession")
+        // Jetty 12 EE 11 bug https://github.com/jetty/jetty.project/issues/11809
+        // httpSession = handshakeRequest != null ? (HttpSession) handshakeRequest.getHttpSession() : (HttpSession) config.userProperties.get("httpSession")
+        httpSession = (HttpSession) config.userProperties.get("httpSession")
         ExecutionContextImpl eci = ecfi.getEci()
         try {
-            if (handshakeRequest != null) {
-                eci.userFacade.initFromHandshakeRequest(handshakeRequest)
-            } else if (httpSession != null) {
+            if (httpSession != null) {
                 eci.userFacade.initFromHttpSession(httpSession)
+            } else if (handshakeRequest != null) {
+                eci.userFacade.initFromHandshakeRequest(handshakeRequest)
             } else {
                 logger.warn("No HandshakeRequest or HttpSession found opening WebSocket Session ${session.id}, not logging in user")
             }
-
 
             userId = eci.user.userId
             username = eci.user.username
@@ -80,7 +83,7 @@ abstract class MoquiAbstractEndpoint extends Endpoint implements MessageHandler.
 
             if (logger.isTraceEnabled()) logger.trace("Opened WebSocket Session ${session.getId()}, userId: ${userId} (${username}), timeout: ${session.getMaxIdleTimeout()}ms")
         } finally {
-            if (eci != null) {
+            if (eci != null && destroyInitialEci) {
                 eci.destroy()
             }
         }
